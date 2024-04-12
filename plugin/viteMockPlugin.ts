@@ -1,4 +1,4 @@
-import fs from "fs";
+// import fs from "fs";
 import { Plugin } from "vite";
 import { Program, parse } from "acorn";
 import { generate } from "astring";
@@ -33,7 +33,7 @@ const convertPrivate = (ast: Program) => {
             params: [],
             body: {
               type: "BlockStatement",
-              body: [...ast.body], // 元のASTのボディをIIFEのボディに設定
+              body: [...ast.body],
             },
           },
           arguments: [],
