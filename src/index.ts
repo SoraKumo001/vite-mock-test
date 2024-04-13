@@ -1,7 +1,36 @@
-import { Test01, Test02 } from "./test";
-import * as Test from "./test";
+import { Test01_1, Test01_2 } from "./test01";
+import { Test02_1, Test02_2 } from "./test02";
+import { Test04_1 } from "./test04";
+import { Test05_1, Test05_2 } from "./test05";
+import { Test06_1 } from "./test06";
 
-(Test as any).___setMock("Test01", () => console.log("mock01"));
+import * as Test01 from "./test01";
+import * as Test02 from "./test02";
+import * as Test03 from "./test03";
+import * as Test04 from "./test04";
+import * as Test05 from "./test05";
+import * as Test06 from "./test06";
+import * as Test07 from "./test07";
 
-Test01();
-Test02();
+(Test01 as any).___setMock("Test01", () => console.log("mock01"));
+
+Test01_1();
+Test01_2();
+
+Test02_1();
+Test02_2();
+
+Test04_1();
+
+Test05_1();
+Test05_2();
+
+console.log(Test06_1);
+
+console.log(Test01);
+console.log(Test02);
+console.log(Test03);
+console.log(Test04);
+console.log(Test05);
+console.log(Test06);
+console.log(Test07);
