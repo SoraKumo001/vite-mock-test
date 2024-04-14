@@ -2,8 +2,9 @@ import fs from "fs";
 import { Plugin } from "vite";
 import { ExportSpecifier, Program, Statement, parse } from "acorn";
 import { generate } from "astring";
-
+import path from "path";
 const ___DEBUG = true;
+const DEFAULT = "___default___";
 
 function removeExport(ast: Program) {
   const exports: Record<string, string> = {};
@@ -15,6 +16,14 @@ function removeExport(ast: Program) {
           node.declaration.declarations?.[0].id.type === "Identifier"
         ) {
           const name = node.declaration.declarations[0].id.name;
+          exports[name] = name;
+          return [node.declaration];
+        }
+        if (
+          node.declaration?.type === "ClassDeclaration" &&
+          node.declaration.id.type === "Identifier"
+        ) {
+          const name = node.declaration.id.name;
           exports[name] = name;
           return [node.declaration];
         }
@@ -34,9 +43,7 @@ function removeExport(ast: Program) {
             ) {
               return [
                 [
-                  v.exported.name === "default"
-                    ? "___default"
-                    : v.exported.name,
+                  v.exported.name === "default" ? DEFAULT : v.exported.name,
                   v.local.name,
                 ] as const,
               ];
@@ -46,26 +53,28 @@ function removeExport(ast: Program) {
           names.forEach(([name, value]) => {
             exports[name] = value;
           });
-          const vars = names
-            .filter(([name, value]) => name !== value)
-            .map(([name, value]) => `const ${name} = ${value};`)
-            .join(";\n");
-          return parse(vars, {
-            sourceType: "module",
-            ecmaVersion: 2020,
-          }) as never;
         }
 
         return [];
       }
 
       if (node.type === "ExportDefaultDeclaration") {
-        exports["___default"] = "___default";
+        if (
+          (node.declaration.type === "FunctionDeclaration" ||
+            node.declaration.type === "ClassDeclaration") &&
+          node.declaration.id
+        ) {
+          exports[DEFAULT] = node.declaration.id.name;
+          return [node.declaration];
+        }
         if (
           node.declaration.type === "ArrowFunctionExpression" ||
           node.declaration.type === "FunctionDeclaration" ||
-          node.declaration.type === "Literal"
+          node.declaration.type === "Literal" ||
+          node.declaration.type === "ClassDeclaration" ||
+          node.declaration.type === "ObjectExpression"
         ) {
+          exports[DEFAULT] = DEFAULT;
           return {
             type: "VariableDeclaration",
             declarations: [
@@ -73,7 +82,7 @@ function removeExport(ast: Program) {
                 type: "VariableDeclarator",
                 id: {
                   type: "Identifier",
-                  name: "___default",
+                  name: DEFAULT,
                   start: node.declaration.start,
                   end: node.declaration.end,
                 },
@@ -88,6 +97,39 @@ function removeExport(ast: Program) {
             end: node.end,
           };
         }
+        if (
+          node.declaration.type === "CallExpression" &&
+          node.declaration.callee.type === "Identifier"
+        ) {
+          exports[DEFAULT] = node.declaration.callee.name;
+          return {
+            type: "VariableDeclaration",
+            declarations: [
+              {
+                type: "VariableDeclarator",
+                id: {
+                  type: "Identifier",
+                  name: DEFAULT,
+                  start: node.declaration.start,
+                  end: node.declaration.end,
+                },
+                init: node.declaration as never,
+
+                start: node.start,
+                end: node.end,
+              },
+            ],
+            kind: "const",
+            start: node.start,
+            end: node.end,
+          };
+        }
+        if (node.declaration.type === "Identifier") {
+          exports[DEFAULT] = node.declaration.name;
+          return [];
+        }
+        console.log(node);
+        throw new Error("Not implemented");
       }
       return [node];
     });
@@ -96,9 +138,16 @@ function removeExport(ast: Program) {
 }
 
 const convertPrivate = (ast: Program) => {
-  const outsides = ["ExportAllDeclaration", "ImportDeclaration"];
+  const outsides = [
+    "ExportAllDeclaration",
+    "ImportDeclaration",
+    // "ExpressionStatement",
+  ];
   const imports = ast.body.filter(
-    (node) => outsides.includes(node.type) || ("source" in node && node.source)
+    (node) =>
+      outsides.includes(node.type) ||
+      ("source" in node && node.source) ||
+      (node.type === "ExpressionStatement" && node.directive)
   );
   const exports = ast.body.filter((v) => !imports.includes(v));
   const node: Statement = {
@@ -152,7 +201,14 @@ const createMock = `
         const v = Object.entries(exp).map(([key, value]) => {
           if (typeof value === "function") {
             funcMap[key] = value;
-            const func = (...params) => funcMap[key](...params);
+            const func = (...params) => {
+              console.log(Object.entries(value));
+              const f = funcMap[key];
+              return f(...params);
+            };
+            Object.entries(value).forEach(([k, v]) => {
+              func[k] = v;
+            });
             Object.defineProperty(func, "name", { value: value.name });
             return [key, func];
           }
@@ -171,7 +227,7 @@ const createMock = `
 export const viteMockPlugin: () => Plugin = () => {
   if (___DEBUG) {
     if (fs.existsSync("tmp")) {
-      fs.rmdirSync("tmp", { recursive: true });
+      fs.rmSync("tmp", { recursive: true });
     }
     fs.mkdirSync("tmp", { recursive: true });
   }
@@ -179,20 +235,31 @@ export const viteMockPlugin: () => Plugin = () => {
     name: "code-out",
     transform(code, id) {
       //ts||js
-      if (!id.match(/\.(ts|js)$/)) {
+      if (!id.match(/\.(ts|js|tsx|jsx)(\?.*)?$/)) {
+        return null;
+      }
+      if (id.startsWith("/virtual:")) {
+        return null;
+      }
+      if (id.startsWith("@storybook")) {
         return null;
       }
       try {
         const ast = parse(code, { sourceType: "module", ecmaVersion: 2020 });
 
         const exports = removeExport(ast);
-        if (Object.entries(exports).length > 0) {
-          const namedExports = Object.entries(exports).filter(
-            ([name]) => name !== "___default"
-          );
+
+        const namedExports = Object.entries(exports).filter(
+          ([name]) => name !== DEFAULT
+        );
+        if (Object.keys(exports).length) {
           const insertMockAst = parse(
             `${createMock}
-            return ___createMock({${Object.keys(exports).join(", ")}});
+            return ___createMock({${Object.entries(exports)
+              .map(([name, value]) =>
+                name === value ? name : `${name}: ${value}`
+              )
+              .join(", ")}});
             `,
             {
               sourceType: "module",
@@ -203,41 +270,40 @@ export const viteMockPlugin: () => Plugin = () => {
           );
           ast.body.push(...insertMockAst.body);
           convertPrivate(ast);
-          if (namedExports.length > 0) {
-            const exportAst = parse(
-              `export const {${namedExports
-                .map(([name, value]) =>
-                  name === value ? name : `${value}:${name}`
-                )
-                .join(", ")}, ___setMock} = ___exports
-            ${
-              Object.keys(exports).find((v) => v === "___default")
-                ? "\nexport default ___exports.___default"
-                : ""
-            }`,
-              {
-                sourceType: "module",
-                ecmaVersion: 2020,
-              }
-            );
-            ast.body.push(...exportAst.body);
-          }
-        }
 
+          const exportAst = parse(
+            `export const {${[...namedExports, ["___setMock"]]
+              .map(([name]) => name)
+              .join(", ")}} = ___exports;` +
+              (Object.keys(exports).find((v) => v === DEFAULT)
+                ? `\nexport default ___exports.${DEFAULT}`
+                : ""),
+            {
+              sourceType: "module",
+              ecmaVersion: 2020,
+            }
+          );
+          ast.body.push(...exportAst.body);
+        }
         const newCode = generate(ast);
         if (___DEBUG) {
-          const name = id
+          const p = path.relative(
+            path.normalize(path.resolve("./")),
+            path.normalize(id.split("?")[0].replaceAll("\0", ""))
+          );
+          const name = p
             .replaceAll("/", "-")
             .replaceAll("\\", "-")
             .replaceAll(":", "-")
-            .replaceAll("?", "-")
-            .replaceAll("\0", "");
+            .replaceAll("?", "-");
+
           fs.writeFileSync(`tmp/${name}`, code);
           fs.writeFileSync(`tmp/${name}.json`, JSON.stringify(ast, null, 2));
           fs.writeFileSync(`tmp/${name}-out.js`, newCode);
         }
         return newCode;
       } catch (e) {
+        console.log("==============================");
         console.log(id);
         console.log(e);
       }
