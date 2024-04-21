@@ -1,12 +1,14 @@
 {
   "scripts": {
+    "plugin:build": "tsc -b src/plugin",
     "run": "node dist",
-    "build": "vite build"
+    "build": "yarn plugin:build && vite build"
   },
   "devDependencies": {
     "@types/node": "^20.12.6",
     "@types/react": "^18.2.78",
     "acorn": "^8.11.3",
+    "acorn-walk": "^8.3.2",
     "astring": "^1.8.6",
     "react": "^18.2.0",
     "typescript": "^5.4.4",

@@ -14,5 +14,5 @@ export default defineConfig({
       },
     },
   },
-  plugins: [viteMockPlugin()],
+  plugins: [viteMockPlugin({ debug: true })],
 });
